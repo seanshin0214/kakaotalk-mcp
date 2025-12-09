@@ -6,6 +6,7 @@ Supports searching by friend name or group chat name
 import sqlite3
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -63,7 +64,7 @@ class ChatInfoManager:
             return results
 
         except Exception as e:
-            print(f"Error querying {edb_path}: {e}")
+            print(f"Error querying {edb_path}: {e}", file=sys.stderr)
             return []
 
         finally:

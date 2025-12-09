@@ -7,6 +7,7 @@ import hashlib
 import sqlite3
 import tempfile
 import os
+import sys
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 from Crypto.Cipher import AES
@@ -76,7 +77,7 @@ def find_user_id(pragma: str, enc_db: bytes, max_attempts: int = 100000) -> Opti
             return str(user_id)
 
         if user_id % 10000 == 0:
-            print(f"Tried {user_id} userIds...")
+            print(f"Tried {user_id} userIds...", file=sys.stderr)
 
     return None
 
@@ -99,7 +100,7 @@ class KakaoDecryptor:
             return self._cached_credentials
 
         if not self.device_info:
-            print("No device info found in registry")
+            print("No device info found in registry", file=sys.stderr)
             return None
 
         uuid = self.device_info.get("uuid", "")
@@ -107,7 +108,7 @@ class KakaoDecryptor:
         serial = self.device_info.get("serial", "")
 
         if not all([uuid, model, serial]):
-            print("Incomplete device info")
+            print("Incomplete device info", file=sys.stderr)
             return None
 
         # Try each network interface key
@@ -143,14 +144,14 @@ class KakaoDecryptor:
 
         creds = self._find_working_credentials(enc_db)
         if not creds:
-            print(f"Could not find working credentials for {edb_path}")
+            print(f"Could not find working credentials for {edb_path}", file=sys.stderr)
             return None
 
         key, iv = generate_key_and_iv(creds["pragma"], creds["user_id"])
         dec_db = decrypt_database(key, iv, enc_db)
 
         if not verify_sqlite_header(dec_db):
-            print("Decryption failed - invalid SQLite header")
+            print("Decryption failed - invalid SQLite header", file=sys.stderr)
             return None
 
         return dec_db
@@ -200,7 +201,7 @@ class KakaoDecryptor:
                             msg = dict(zip(columns, row))
                             messages.append(msg)
                     except Exception as e:
-                        print(f"Error reading table {table_name}: {e}")
+                        print(f"Error reading table {table_name}: {e}", file=sys.stderr)
 
             conn.close()
             return messages

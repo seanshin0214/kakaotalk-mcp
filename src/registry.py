@@ -4,6 +4,7 @@ Extracts UUID, ModelName, SerialNumber from Windows Registry
 """
 import winreg
 import os
+import sys
 from typing import Optional, Dict, List
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def get_kakaotalk_device_info() -> Optional[Dict[str, str]]:
         return result
 
     except Exception as e:
-        print(f"Error reading registry: {e}")
+        print(f"Error reading registry: {e}", file=sys.stderr)
         return None
 
 
@@ -94,7 +95,7 @@ def get_network_interface_keys() -> List[str]:
         winreg.CloseKey(base_key)
 
     except Exception as e:
-        print(f"Error reading network interfaces: {e}")
+        print(f"Error reading network interfaces: {e}", file=sys.stderr)
 
     return keys
 
