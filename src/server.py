@@ -5,8 +5,14 @@ Extract todos from KakaoTalk conversations by friend name or chat room name
 """
 import asyncio
 import json
+import sys
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Sequence
+
+# Add parent directory to path for direct script execution
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -16,14 +22,26 @@ from mcp.types import (
     EmbeddedResource,
 )
 
-from .registry import (
-    get_kakaotalk_user_dir,
-    get_chat_data_path,
-    list_chat_files,
-    get_kakaotalk_device_info,
-)
-from .chat_info import ChatInfoManager, TodoExtractor
-from .decrypt import KakaoDecryptor
+try:
+    # Try relative imports first (when run as module)
+    from .registry import (
+        get_kakaotalk_user_dir,
+        get_chat_data_path,
+        list_chat_files,
+        get_kakaotalk_device_info,
+    )
+    from .chat_info import ChatInfoManager, TodoExtractor
+    from .decrypt import KakaoDecryptor
+except ImportError:
+    # Fall back to absolute imports (when run as script)
+    from src.registry import (
+        get_kakaotalk_user_dir,
+        get_chat_data_path,
+        list_chat_files,
+        get_kakaotalk_device_info,
+    )
+    from src.chat_info import ChatInfoManager, TodoExtractor
+    from src.decrypt import KakaoDecryptor
 
 
 # Initialize server
