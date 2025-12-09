@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kakaotalk-mcp"
+version = "1.0.0"
+description = "World's First KakaoTalk MCP - Extract todos from KakaoTalk conversations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "sshin", email = "sshin@example.com" }
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pycryptodome>=3.19.0",
+    "chardet>=5.2.0",
+]
+
+[project.scripts]
+kakaotalk-mcp = "src.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
