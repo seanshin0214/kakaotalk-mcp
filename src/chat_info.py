@@ -2,17 +2,22 @@
 KakaoTalk Chat Info Parser
 Extracts chat room names, participants info from chatListInfo.edb
 Supports searching by friend name or group chat name
+
+Fixed: 2025-12-09
+- Added file copy to avoid DB lock issues
+- Added chat name extraction from chatListInfo.edb
 """
 import sqlite3
 import json
 import os
 import sys
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from .registry import get_chat_data_path, list_chat_files
+from .registry import get_chat_data_path, list_chat_files, get_kakaotalk_user_dir
 
 
 class ChatInfoManager:
@@ -22,8 +27,10 @@ class ChatInfoManager:
 
     def __init__(self, decryptor=None):
         self.chat_data_path = get_chat_data_path()
+        self.user_dir = get_kakaotalk_user_dir()
         self.decryptor = decryptor
         self._chat_list_cache = None
+        self._chat_names_cache = None
 
     def get_chat_list_info_path(self) -> Optional[str]:
         """Get path to chatListInfo.edb"""
@@ -32,23 +39,29 @@ class ChatInfoManager:
         path = Path(self.chat_data_path) / "chatListInfo.edb"
         return str(path) if path.exists() else None
 
-    def get_talk_user_db_path(self) -> Optional[str]:
-        """Get path to TalkUserDB.edb (contains user/friend info)"""
-        if not self.chat_data_path:
+    def _copy_file_safely(self, src_path: str) -> Optional[str]:
+        """
+        Copy a file to temp directory to avoid lock issues.
+        Returns path to the copied file.
+        """
+        try:
+            # Create temp file with same extension
+            suffix = Path(src_path).suffix
+            fd, temp_path = tempfile.mkstemp(suffix=suffix)
+            os.close(fd)
+
+            # Copy the file
+            shutil.copy2(src_path, temp_path)
+            return temp_path
+        except Exception as e:
+            print(f"Error copying file {src_path}: {e}", file=sys.stderr)
             return None
-        # TalkUserDB is in parent directory
-        parent = Path(self.chat_data_path).parent
-        path = parent / "TalkUserDB.edb"
-        return str(path) if path.exists() else None
 
-    def _decrypt_and_query(self, edb_path: str, query: str) -> List[Dict]:
+    def _read_sqlite_safely(self, db_path: str, query: str) -> List[Dict]:
         """
-        Decrypt EDB and execute query.
+        Copy SQLite file and read from copy to avoid lock issues.
         """
-        if not self.decryptor:
-            return []
-
-        temp_path = self.decryptor.decrypt_to_temp_file(edb_path)
+        temp_path = self._copy_file_safely(db_path)
         if not temp_path:
             return []
 
@@ -62,14 +75,116 @@ class ChatInfoManager:
 
             conn.close()
             return results
-
         except Exception as e:
-            print(f"Error querying {edb_path}: {e}", file=sys.stderr)
+            print(f"Error reading {db_path}: {e}", file=sys.stderr)
             return []
-
         finally:
             if os.path.exists(temp_path):
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+
+    def _decrypt_and_query(self, edb_path: str, query: str) -> List[Dict]:
+        """
+        Copy, decrypt EDB and execute query.
+        """
+        if not self.decryptor:
+            return []
+
+        # First copy the file to avoid lock
+        temp_edb = self._copy_file_safely(edb_path)
+        if not temp_edb:
+            return []
+
+        try:
+            temp_db = self.decryptor.decrypt_to_temp_file(temp_edb)
+            if not temp_db:
+                return []
+
+            try:
+                conn = sqlite3.connect(temp_db)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                cursor.execute(query)
+                results = [dict(row) for row in cursor.fetchall()]
+
+                conn.close()
+                return results
+
+            except Exception as e:
+                print(f"Error querying {edb_path}: {e}", file=sys.stderr)
+                return []
+            finally:
+                if os.path.exists(temp_db):
+                    try:
+                        os.remove(temp_db)
+                    except:
+                        pass
+        finally:
+            if os.path.exists(temp_edb):
+                try:
+                    os.remove(temp_edb)
+                except:
+                    pass
+
+    def _get_chat_names_from_db(self) -> Dict[str, str]:
+        """
+        Get chat room names from chatListInfo.edb.
+        Returns dict of {chat_id: chat_name}
+        """
+        if self._chat_names_cache:
+            return self._chat_names_cache
+
+        chat_list_path = self.get_chat_list_info_path()
+        if not chat_list_path:
+            return {}
+
+        if not self.decryptor:
+            return {}
+
+        # Try to get chat names
+        try:
+            results = self._decrypt_and_query(
+                chat_list_path,
+                "SELECT * FROM chatRooms LIMIT 1000"
+            )
+
+            chat_names = {}
+            for row in results:
+                chat_id = str(row.get("chatId", row.get("id", "")))
+
+                # Try different column names for chat name
+                name = (
+                    row.get("title") or
+                    row.get("name") or
+                    row.get("displayName") or
+                    row.get("chatName") or
+                    row.get("memberNames") or
+                    ""
+                )
+
+                if chat_id and name:
+                    chat_names[chat_id] = name
+
+            self._chat_names_cache = chat_names
+            return chat_names
+
+        except Exception as e:
+            print(f"Error getting chat names: {e}", file=sys.stderr)
+
+        # Fallback: try to read table structure
+        try:
+            results = self._decrypt_and_query(
+                chat_list_path,
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            print(f"Tables in chatListInfo: {[r.get('name') for r in results]}", file=sys.stderr)
+        except:
+            pass
+
+        return {}
 
     def get_all_chat_rooms(self) -> List[Dict]:
         """
@@ -80,16 +195,22 @@ class ChatInfoManager:
             return self._chat_list_cache
 
         chat_files = list_chat_files()
+        chat_names = self._get_chat_names_from_db()
 
-        # Build basic info from file system
+        # Build info from file system + names from DB
         chat_rooms = []
         for cf in chat_files:
+            chat_id = cf["chat_id"]
+
+            # Try to get name from DB, fallback to ID-based name
+            name = chat_names.get(chat_id, f"Chat_{chat_id[-6:]}")
+
             chat_rooms.append({
-                "chat_id": cf["chat_id"],
+                "chat_id": chat_id,
                 "file_path": cf["path"],
                 "file_size": cf["size"],
                 "last_modified": datetime.fromtimestamp(cf["modified"]).isoformat(),
-                "name": f"Chat_{cf['chat_id'][-6:]}",  # Default name
+                "name": name,
                 "type": "unknown",
                 "member_count": 0,
             })
@@ -125,6 +246,7 @@ class ChatInfoManager:
     def get_messages_from_chat(self, chat_id: str, limit: int = 100) -> List[Dict]:
         """
         Get messages from a specific chat room.
+        Copies file first to avoid lock issues.
         """
         if not self.chat_data_path:
             return []
@@ -136,7 +258,20 @@ class ChatInfoManager:
         if not self.decryptor:
             return []
 
-        return self.decryptor.get_messages_from_edb(str(edb_path))
+        # Copy file first to avoid lock
+        temp_edb = self._copy_file_safely(str(edb_path))
+        if not temp_edb:
+            return []
+
+        try:
+            messages = self.decryptor.get_messages_from_edb(temp_edb)
+            return messages[:limit] if limit else messages
+        finally:
+            if os.path.exists(temp_edb):
+                try:
+                    os.remove(temp_edb)
+                except:
+                    pass
 
     def search_messages(self, chat_id: str, keyword: str, limit: int = 50) -> List[Dict]:
         """
